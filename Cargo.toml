@@ -11,6 +11,10 @@ repository = "https://github.com/Nic0w/tempo-rs"
 homepage = "https://github.com/Nic0w/tempo-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
 
 [dependencies]
 base64 = "0.22.0"
