@@ -72,7 +72,7 @@ pub struct CalendarValue {
 }
 
 ///Tempo day color.
-#[derive(Debug, Deserialize, Clone, Copy)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum TempoColor {
     /// Blue day
