@@ -1,7 +1,14 @@
 [package]
 name = "tempo-rs"
+description = "Rust library & minimal client to connect and interact with RTE's 'Tempo Like Supply Contract' API"
+categories = ["api-bindings", "asynchronous", "command-line-utilities"]
+keyword = ["tempo", "rte", "edf", "api", "cli", "france", "electricity"]
 version = "0.1.0"
 edition = "2021"
+license-file = "LICENSE"
+readme = "README.md"
+repository = "https://github.com/Nic0w/tempo-rs"
+homepage = "https://github.com/Nic0w/tempo-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
