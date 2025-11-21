@@ -46,10 +46,7 @@ use std::{
 
 use base64::{prelude::BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
-use oauth2::{
-    basic::BasicClient, reqwest::async_http_client, AuthUrl, ClientId, ClientSecret, TokenResponse,
-    TokenUrl,
-};
+use oauth2::{basic::BasicClient, AuthUrl, ClientId, ClientSecret, Scope, TokenResponse, TokenUrl};
 use reqwest::{
     header::{self, HeaderValue, ACCEPT},
     Method, StatusCode,
@@ -78,7 +75,7 @@ pub enum ApiError {
     OAuth2(
         #[from]
         oauth2::RequestTokenError<
-            oauth2::reqwest::Error<reqwest::Error>,
+            oauth2::HttpClientError<reqwest::Error>,
             oauth2::StandardErrorResponse<oauth2::basic::BasicErrorResponseType>,
         >,
     ),
@@ -112,17 +109,35 @@ type OAuth2TokenResponse =
 
 /// Main object for interacting with the API.
 ///
-/// ```
+/// ```no_run
+/// use tempo_rs::Tempo;
+///
+/// # async fn example() {
 /// let tempo: Tempo = tempo_rs::authorize_with_file("./credentials.secret").await.unwrap();
 /// let next_day = tempo.next_day().await.unwrap();
 ///
 /// println!("{:?}", next_day);
+/// # }
 /// ```
 pub struct Tempo {
     token_response: RefCell<OAuth2TokenResponse>,
     token_expiry: Option<(RefCell<DateTime<Utc>>, Cell<u64>)>,
 
-    oauth2_client: BasicClient,
+    oauth2_client: oauth2::Client<
+        oauth2::StandardErrorResponse<oauth2::basic::BasicErrorResponseType>,
+        oauth2::StandardTokenResponse<oauth2::EmptyExtraTokenFields, oauth2::basic::BasicTokenType>,
+        oauth2::StandardTokenIntrospectionResponse<
+            oauth2::EmptyExtraTokenFields,
+            oauth2::basic::BasicTokenType,
+        >,
+        oauth2::StandardRevocableToken,
+        oauth2::StandardErrorResponse<oauth2::RevocationErrorResponseType>,
+        oauth2::EndpointSet,
+        oauth2::EndpointNotSet,
+        oauth2::EndpointNotSet,
+        oauth2::EndpointNotSet,
+        oauth2::EndpointSet,
+    >,
     http_client: reqwest::Client,
 }
 
@@ -170,11 +185,20 @@ pub async fn authorize(client_id: String, client_secret: String) -> Result<Tempo
     let auth_url = AuthUrl::new(RTE_API_AUTH_URL.to_owned()).unwrap();
     let token_url = TokenUrl::new(RTE_API_AUTH_URL.to_owned()).unwrap();
 
-    let oauth2_client = BasicClient::new(client_id, Some(client_secret), auth_url, Some(token_url));
+    let oauth2_client = BasicClient::new(client_id)
+        .set_client_secret(client_secret)
+        .set_auth_uri(auth_url)
+        .set_token_uri(token_url);
+
+    let http_client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(ApiError::Reqwest)?;
 
     let token_response = oauth2_client
         .exchange_client_credentials()
-        .request_async(async_http_client)
+        .add_scope(Scope::new("tempo_like_supply_contract".to_string()))
+        .request_async(&http_client)
         .await?;
 
     let now: DateTime<Utc> = Utc::now();
@@ -189,7 +213,7 @@ pub async fn authorize(client_id: String, client_secret: String) -> Result<Tempo
         token_response,
         token_expiry,
         oauth2_client,
-        http_client: reqwest::Client::new(),
+        http_client,
     })
 }
 
@@ -253,7 +277,7 @@ impl Tempo {
             let new_token_response = self
                 .oauth2_client
                 .exchange_client_credentials()
-                .request_async(async_http_client)
+                .request_async(&self.http_client)
                 .await?;
 
             log::debug!(target: "tempo-rs::get_oauth_token", 
