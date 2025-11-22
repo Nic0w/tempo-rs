@@ -38,11 +38,7 @@
 //! [4]: https://data.rte-france.com/
 //! [5]: https://data.rte-france.com/catalog/-/api/consumption/Tempo-Like-Supply-Contract/v1.1
 
-use std::{
-    cell::{Cell, RefCell},
-    fs,
-    path::Path,
-};
+use std::{fs, path::Path};
 
 use base64::{prelude::BASE64_STANDARD, Engine as _};
 use chrono::{DateTime, Utc};
@@ -53,6 +49,7 @@ use reqwest::{
 };
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
+use tokio::sync::Mutex;
 
 mod model;
 
@@ -107,6 +104,11 @@ pub enum ApiError {
 type OAuth2TokenResponse =
     oauth2::StandardTokenResponse<oauth2::EmptyExtraTokenFields, oauth2::basic::BasicTokenType>;
 
+struct TokenState {
+    response: OAuth2TokenResponse,
+    expiry: Option<(DateTime<Utc>, u64)>,
+}
+
 /// Main object for interacting with the API.
 ///
 /// ```no_run
@@ -120,8 +122,7 @@ type OAuth2TokenResponse =
 /// # }
 /// ```
 pub struct Tempo {
-    token_response: RefCell<OAuth2TokenResponse>,
-    token_expiry: Option<(RefCell<DateTime<Utc>>, Cell<u64>)>,
+    state: Mutex<TokenState>,
 
     oauth2_client: oauth2::Client<
         oauth2::StandardErrorResponse<oauth2::basic::BasicErrorResponseType>,
@@ -203,15 +204,17 @@ pub async fn authorize(client_id: String, client_secret: String) -> Result<Tempo
 
     let now: DateTime<Utc> = Utc::now();
 
-    let token_expiry = token_response
+    let expiry = token_response
         .expires_in()
-        .map(|duration| (RefCell::new(now + duration), Cell::new(duration.as_secs())));
+        .map(|duration| (now + duration, duration.as_secs()));
 
-    let token_response = RefCell::new(token_response);
+    let state = Mutex::new(TokenState {
+        response: token_response,
+        expiry,
+    });
 
     Ok(Tempo {
-        token_response,
-        token_expiry,
+        state,
         oauth2_client,
         http_client,
     })
@@ -240,38 +243,20 @@ fn parse_www_authenticate(value: &HeaderValue) -> Option<(&str, &str)> {
 }
 
 impl Tempo {
-    unsafe fn current_access_token(&self) -> &String {
-        let access_token = self
-            .token_response
-            .try_borrow_unguarded()
-            .map(|token_response| token_response.access_token())
-            .unwrap();
+    async fn get_oauth_token(&self) -> Result<String, ApiError> {
+        let mut state = self.state.lock().await;
 
-        access_token.secret()
-    }
-
-    async fn get_oauth_token(&self) -> Result<&String, ApiError> {
-        if let Some((expiry, duration)) = self.token_expiry.as_ref() {
+        if let Some((expiry, _duration)) = state.expiry {
             let now: DateTime<Utc> = Utc::now();
 
-            let delta = {
-                let expiry = expiry.borrow();
-
-                expiry.signed_duration_since(now).num_seconds()
-            };
+            let delta = expiry.signed_duration_since(now).num_seconds();
 
             log::debug!(target: "tempo-rs::get_oauth_token", 
                 "Time is {} and token expires in {} seconds", now, delta);
 
             if delta.is_positive() {
                 //token hasn't expired yet
-
-                //Safe because
-                // 1/ we return immediately
-                // 2/ the returned &String will be used immediately on the next (current) request.
-                // 3/ get_auth_token() won't be called before next request so token_response
-                //    won't be altered at least before next request.
-                return Ok(unsafe { self.current_access_token() });
+                return Ok(state.response.access_token().secret().clone());
             }
 
             let new_token_response = self
@@ -284,21 +269,14 @@ impl Tempo {
                 "Successfully renewed token");
 
             if let Some(new_expiry) = new_token_response.expires_in() {
-                expiry.replace(now + new_expiry);
-                duration.replace(new_expiry.as_secs());
+                state.expiry = Some((now + new_expiry, new_expiry.as_secs()));
             }
 
-            self.token_response.replace(new_token_response);
+            state.response = new_token_response;
 
-            //Safe because
-            // 1/ we return immediately
-            // 2/ mutability already happened.
-            Ok(unsafe { self.current_access_token() })
+            Ok(state.response.access_token().secret().clone())
         } else {
-            //Safe because
-            // 1/ we return immediately
-            // 2/ the token never expires, so it won't ever but mutably borrowed or else
-            Ok(unsafe { self.current_access_token() })
+            Ok(state.response.access_token().secret().clone())
         }
     }
 

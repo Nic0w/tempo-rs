@@ -3,7 +3,7 @@ name = "tempo-rs"
 description = "Rust library & minimal client to connect and interact with RTE's 'Tempo Like Supply Contract' API"
 categories = ["api-bindings", "asynchronous", "command-line-utilities"]
 keyword = ["tempo", "rte", "edf", "api", "cli", "france", "electricity"]
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 license-file = "LICENSE"
 readme = "README.md"
@@ -25,4 +25,4 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["raw_value"] }
 thiserror = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync"] }
